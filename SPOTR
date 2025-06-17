@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>AI Coach Assistant Widget</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    html, body {
+      width: 100vw; height: 100vh; margin: 0; padding: 0; background: transparent;
+      overflow: hidden;
+    }
+    body {
+      position: relative;
+      min-height: 100vh;
+      background: transparent;
+    }
+    #mic-btn {
+      position: fixed;
+      left: 50%; bottom: 24px;
+      transform: translateX(-50%);
+      z-index: 1000;
+      width: 54px; height: 54px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #3ae374 60%, #1289A7 100%);
+      border: none;
+      outline: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 2px 10px rgba(58,227,116,0.18);
+      transition: box-shadow 0.19s, background 0.21s;
+      cursor: pointer;
+    }
+    #mic-btn.listening {
+      background: linear-gradient(135deg, #1dd1a1 60%, #54a0ff 100%);
+      box-shadow: 0 0 0 7px rgba(58,227,116,0.12), 0 2px 10px rgba(80,255,180,0.22);
+      animation: pulse 1s infinite;
+    }
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 7px rgba(58,227,116,0.15);}
+      50% { box-shadow: 0 0 0 13px rgba(58,227,116,0.28);}
+      100% { box-shadow: 0 0 0 7px rgba(58,227,116,0.15);}
+    }
+    #mic-btn img {
+      width: 28px; height: 28px; filter: drop-shadow(0 1px 4px #11e4a8cc);
+      pointer-events: none;
+      user-select: none;
+    }
+    #feedback {
+      position: fixed;
+      left: 50%; bottom: 86px;
+      transform: translateX(-50%);
+      background: #181e2eeb;
+      color: #b8e994;
+      font-size: 1.08rem;
+      padding: 7px 18px;
+      border-radius: 16px;
+      min-width: 100px; max-width: 76vw;
+      text-align: center;
+      z-index: 1001;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.17s;
+      box-shadow: 0 1px 10px #00000027;
+      white-space: pre-line;
+      overflow-wrap: break-word;
+    }
+    #feedback.show {
+      opacity: 1;
+    }
+    @media (max-width: 600px) {
+      #mic-btn { width: 44px; height: 44px; }
+      #mic-btn img { width: 22px; height: 22px; }
+      #feedback { font-size: 0.97rem; padding: 6px 11px; bottom: 68px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="feedback"></div>
+  <button id="mic-btn" aria-label="Toggle microphone" title="Toggle mic" type="button">
+    <img src="https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f399.png" alt="Mic" id="mic-icon">
+  </button>
+  <script>
+    // ====== CONFIGURATION ======
+    // Set true for instant demo mode with browser APIs (no backend required).
+    // Set to false and fill in endpoints for production with Whisper/Rasa/TTS.
+    const USE_DEMO_MODE = true;
+
+    // If using production backend, fill in endpoints:
+    const WHISPER_ENDPOINT = '/api/whisper/transcribe';
+    const RASA_ENDPOINT = '/api/rasa/respond';
+    const TTS_ENDPOINT = '/api/tts/speak';
+
+    // ====== DOM REFS ======
+    const micBtn = document.getElementById('mic-btn');
+    const feedback = document.getElementById('feedback');
+    let listening = false;
+    let mediaRecorder, audioChunks = [];
+
+    // ====== UI Feedback ======
+    function showFeedback(msg = '', color = '#b8e994', duration = 3200) {
+      feedback.textContent = msg;
+      feedback.style.color = color;
+      feedback.classList.add('show');
+      if (duration > 0) {
+        clearTimeout(feedback._timeout);
+        feedback._timeout = setTimeout(() => feedback.classList.remove('show'), duration);
+      }
+    }
+
+    // ====== DEMO MODE: Uses browser speech APIs for instant testability ======
+    let speechRecognition, synthUtter;
+    function supportsSpeechRecognition() {
+      return 'SpeechRecognition' in window || 'webkitSpeechRecognition' in window;
+    }
+    function supportsSpeechSynthesis() {
+      return 'speechSynthesis' in window;
+    }
+    async function demoListenAndRespond() {
+      if (!supportsSpeechRecognition() || !supportsSpeechSynthesis()) {
+        showFeedback("Sorry, your browser doesn't support voice.", '#ff7675', 4000);
+        return;
+      }
+      micBtn.classList.add('listening');
+      showFeedback('Listening...', '#ffeaa7', 0);
+      // Start browser speech recognition
+      speechRecognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+      speechRecognition.lang = 'en-US';
+      speechRecognition.interimResults = false;
+      speechRecognition.maxAlternatives = 1;
+      speechRecognition.onresult = e => {
+        const transcript = e.results[0][0].transcript;
+        showFeedback(`You: ${transcript}`, '#81ecec', 2400);
+        demoRespond(transcript);
+      };
+      speechRecognition.onerror = e => {
+        showFeedback('No speech detected.', '#ff7675', 2000);
+        micBtn.classList.remove('listening');
+        listening = false;
+      };
+      speechRecognition.onend = () => {
+        micBtn.classList.remove('listening');
+        listening = false;
+      };
+      speechRecognition.start();
+    }
+    function demoRespond(userText) {
+      // For demo: Simulate Rasa & TTS with canned or echo response
+      setTimeout(() => {
+        let response = '';
+        // Add some fun demo logic here if desired
+        if (/jump|drill|program/i.test(userText)) {
+          response = "Let's design a new jump drill session for you!";
+        } else if (/hello|hi|hey/i.test(userText)) {
+          response = "Hello! How can I help coach today?";
+        } else {
+          response = "I've noted that. What's next?";
+        }
+        showFeedback(`Coach: ${response}`, '#b8e994', 3400);
+        // Speak
+        if (supportsSpeechSynthesis()) {
+          const utter = new SpeechSynthesisUtterance(response);
+          utter.rate = 1.02;
+          utter.pitch = 1.05;
+          utter.lang = 'en-US';
+          window.speechSynthesis.speak(utter);
+        }
+      }, 600);
+    }
+
+    // ====== PRODUCTION MODE: Use backend APIs ======
+    async function startListeningProd() {
+      if (!navigator.mediaDevices || !window.MediaRecorder) {
+        showFeedback('Browser does not support audio recording.', '#ff7675', 4000);
+        return;
+      }
+      micBtn.classList.add('listening');
+      showFeedback('Listening...', '#ffeaa7', 0);
+      audioChunks = [];
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({audio: true});
+        mediaRecorder = new MediaRecorder(stream);
+        mediaRecorder.ondataavailable = e => {
+          if (e.data.size > 0) audioChunks.push(e.data);
+        };
+        mediaRecorder.onstop = async () => {
+          showFeedback('Processing...', '#00d2d3', 0);
+          const audioBlob = new Blob(audioChunks, {type: 'audio/webm'});
+          // 1. Whisper
+          let transcript = '';
+          try {
+            transcript = await transcribeWithWhisper(audioBlob);
+            if (!transcript) throw new Error('No transcription');
+            showFeedback(`You: ${transcript}`, '#81ecec', 1700);
+          } catch {
+            showFeedback('Could not transcribe. Try again.', '#ff7675', 2200);
+            micBtn.classList.remove('listening');
+            listening = false;
+            return;
+          }
+          // 2. Rasa
+          let aiResponse = '';
+          try {
+            aiResponse = await getRasaResponse(transcript);
+            if (!aiResponse) throw new Error('No response');
+            showFeedback(`Coach: ${aiResponse}`, '#b8e994', 2400);
+          } catch {
+            showFeedback('No response from coach.', '#ff7675', 2000);
+            return;
+          }
+          // 3. Google TTS
+          try {
+            await speakWithTTS(aiResponse);
+          } catch {
+            showFeedback('Could not play response.', '#ff7675', 1800);
+          }
+          micBtn.classList.remove('listening');
+          listening = false;
+        };
+        mediaRecorder.start();
+      } catch (err) {
+        showFeedback('Microphone error or denied.', '#ff7675', 2000);
+        micBtn.classList.remove('listening');
+        listening = false;
+      }
+    }
+    function stopListeningProd() {
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
+      }
+    }
+    // BACKEND API STUBS
+    async function transcribeWithWhisper(audioBlob) {
+      const formData = new FormData();
+      formData.append('audio', audioBlob, 'speech.webm');
+      const res = await fetch(WHISPER_ENDPOINT, {method: 'POST', body: formData});
+      if (!res.ok) throw new Error('Whisper error');
+      const data = await res.json();
+      return data.text;
+    }
+    async function getRasaResponse(text) {
+      const res = await fetch(RASA_ENDPOINT, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({text})
+      });
+      if (!res.ok) throw new Error('Rasa error');
+      const data = await res.json();
+      return data.response;
+    }
+    async function speakWithTTS(text) {
+      const res = await fetch(TTS_ENDPOINT, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({text})
+      });
+      if (!res.ok) throw new Error('TTS error');
+      if (res.headers.get('Content-Type').includes('application/json')) {
+        const data = await res.json();
+        if (!data.audioUrl) throw new Error('No audio');
+        const audio = new Audio(data.audioUrl);
+        await audio.play();
+      } else {
+        const blob = await res.blob();
+        const audioUrl = URL.createObjectURL(blob);
+        const audio = new Audio(audioUrl);
+        await audio.play();
+        audio.onended = () => URL.revokeObjectURL(audioUrl);
+      }
+    }
+
+    // ====== BUTTON CONTROL ======
+    micBtn.addEventListener('click', () => {
+      if (listening) {
+        stopAll();
+        listening = false;
+        micBtn.classList.remove('listening');
+        showFeedback('Mic muted', '#b8e994', 1200);
+      } else {
+        listening = true;
+        if (USE_DEMO_MODE) {
+          demoListenAndRespond();
+        } else {
+          startListeningProd();
+        }
+      }
+    });
+
+    // Stop all (both demo and prod)
+    function stopAll() {
+      if (USE_DEMO_MODE) {
+        if (speechRecognition) {
+          try { speechRecognition.abort(); } catch {}
+        }
+        if (window.speechSynthesis && window.speechSynthesis.speaking) {
+          window.speechSynthesis.cancel();
+        }
+      } else {
+        stopListeningProd();
+      }
+    }
+
+    // Accessibility: Space/Enter can trigger mic
+    document.addEventListener('keydown', e => {
+      if ((e.key === ' ' || e.key === 'Enter') && document.activeElement === micBtn) {
+        micBtn.click();
+        e.preventDefault();
+      }
+    });
+
+    // Initial feedback
+    showFeedback('Tap mic to start!', '#b8e994', 1800);
+
+    // Expose for Lovable integration if needed:
+    window.JumpTekVoiceWidget = {
+      mute: () => { if (listening) { micBtn.click(); } },
+      unmute: () => { if (!listening) { micBtn.click(); } },
+      isListening: () => listening
+    };
+  </script>
+</body>
+</html>
