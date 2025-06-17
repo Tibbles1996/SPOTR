@@ -1,0 +1,2 @@
+# SPOTR
+Coaching AI assistant
